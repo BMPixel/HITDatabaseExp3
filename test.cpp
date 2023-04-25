@@ -47,7 +47,10 @@ struct Worker
     int readIntFromBlkWithOffset(int offset)
     {
         int val;
-        memcpy(&val, blk + offset, 4);
+        for (int i = 0; i < 4; i++)
+        {
+            ((unsigned char *)&val)[i] = blk[offset + i];
+        }
         return val;
     }
 
@@ -74,7 +77,7 @@ struct Worker
         }
         if (offset + tupleSize + 4 > buf->blkSize)
         {
-            int nextBlockAddr = currentAddr + 1;
+            int nextBlockAddr = currentAddr + 10;
             memcpy(blk + buf->blkSize - 4, &nextBlockAddr, 4);
             writeBlockToDisk(blk, currentAddr, buf);
             currentAddr = nextBlockAddr;
@@ -106,12 +109,13 @@ struct Worker
         }
         if (offset + tupleSize + 4 > buf->blkSize)
         {
-            int nextBlockAddr = rand() % 100000000 + 100000000;
+            int nextBlockAddr = currentAddr + 10;
             memcpy(blk + buf->blkSize - 4, &nextBlockAddr, 4);
             writeBlockToDisk(blk, currentAddr, buf);
             currentAddr = nextBlockAddr;
             blk = getNewBlockInBuffer(buf);
             offset = 0;
+            printf("New block addr: %d\n", currentAddr);
         }
         memcpy(blk + offset, &val1, 4);
         memcpy(blk + offset + 4, &val2, 4);
@@ -139,7 +143,7 @@ struct Worker
         }
         if (offset + tupleSize + 4 > buf->blkSize)
         {
-            int nextBlockAddr = rand() % 100000000 + 100000000;
+            int nextBlockAddr = currentAddr + 10;
             memcpy(blk + buf->blkSize - 4, &nextBlockAddr, 4);
             writeBlockToDisk(blk, currentAddr, buf);
             currentAddr = nextBlockAddr;
@@ -299,7 +303,7 @@ struct Worker
                 if (tupleSize == 4)
                 {
                     int val = readIntFromBlkWithOffset(i * tupleSize);
-                    printf("%d ", val);
+                    printf("(%d) ", val);
                 }
                 else if (tupleSize == 8)
                 {
@@ -323,7 +327,7 @@ struct Worker
     }
 };
 
-Worker initializeRelationR(Buffer buf)
+Worker taskInitializeRelationR(Buffer buf)
 {
     Worker writeWorker(&buf, 10000, true);
     for (int i = 0; i < 16; i++)
@@ -337,7 +341,7 @@ Worker initializeRelationR(Buffer buf)
     return writeWorker;
 }
 
-Worker initializeRelationS(Buffer buf)
+Worker taskInitializeRelationS(Buffer buf)
 {
     Worker writeWorker(&buf, 20000, true);
     for (int i = 0; i < 32; i++)
@@ -349,6 +353,84 @@ Worker initializeRelationS(Buffer buf)
     }
     writeWorker.finish();
     return writeWorker;
+}
+
+Worker taskFilterRA40(Buffer *buf, int raddr)
+{
+    Worker reader(buf, raddr, false);
+    reader.setTupleSize(8);
+    Worker writer(buf, 30000, true);
+    writer.setTupleSize(8);
+    while (reader.hasNext())
+    {
+        Tuple2 tuple = reader.readTuple2();
+        if (get<0>(tuple) == 40)
+        {
+            writer.pushTuple(get<0>(tuple), get<1>(tuple));
+        }
+    }
+    writer.finish();
+    return writer;
+}
+
+Worker taskFilterSC60(Buffer *buf, int saddr)
+{
+    Worker reader(buf, saddr, false);
+    reader.setTupleSize(8);
+    Worker writer(buf, 40000, true);
+    writer.setTupleSize(8);
+    while (reader.hasNext())
+    {
+        Tuple2 tuple = reader.readTuple2();
+        if (get<0>(tuple) == 60)
+        {
+            writer.pushTuple(get<0>(tuple), get<1>(tuple));
+        }
+    }
+    writer.finish();
+    return writer;
+}
+
+Worker taskProjectRA(Buffer *buf, int saddr)
+{
+    Worker reader(buf, saddr, false);
+    reader.setTupleSize(8);
+    Worker writer(buf, 50000, true);
+    writer.setTupleSize(4);
+    while (reader.hasNext())
+    {
+        Tuple2 tuple = reader.readTuple2();
+        writer.pushTuple(get<0>(tuple));
+    }
+    writer.finish();
+    return writer;
+}
+
+Worker taskLoopJoin(Buffer *buf, int saddr, int raddr)
+{
+    Worker readerS(buf, saddr, false);
+    readerS.setTupleSize(8);
+    Worker readerR(buf, raddr, false);
+    readerR.setTupleSize(8);
+    Worker writer(buf, 60000, true);
+    writer.setTupleSize(16);
+    while (readerS.hasNext())
+    {
+        Tuple2 tupleS = readerS.readTuple2();
+        while (readerR.hasNext())
+        {
+            Tuple2 tupleR = readerR.readTuple2();
+            if (get<0>(tupleS) == get<0>(tupleR))
+            {
+                writer.pushTuple(get<0>(tupleS), get<1>(tupleS), get<0>(tupleR), get<1>(tupleR));
+            }
+        }
+        freeBlockInBuffer(readerR.blk, buf);
+        readerR = Worker(buf, raddr, false);
+        readerR.setTupleSize(8);
+    }
+    writer.finish();
+    return writer;
 }
 
 int main(int argc, char **argv)
@@ -372,14 +454,33 @@ int main(int argc, char **argv)
     }
     if (string(argv[1]) == "buildR")
     {
-        Worker worker = initializeRelationR(buf);
-        Worker reader = Worker(&buf, worker.initialAddr, false);
-        reader.setTupleSize(8);
-        while (reader.hasNext())
-        {
-            Tuple2 tuple = reader.readTuple2();
-            printf("(%d, %d) ", get<0>(tuple), get<1>(tuple));
-        }
+        Worker worker = taskInitializeRelationR(buf);
+        worker.printAll();
+    }
+    else if (string(argv[1]) == "select40")
+    {
+        Worker worker = taskInitializeRelationR(buf);
+        Worker result = taskFilterRA40(&buf, worker.initialAddr);
+        result.printAll();
+    }
+    else if (string(argv[1]) == "select60")
+    {
+        Worker worker = taskInitializeRelationS(buf);
+        Worker result = taskFilterSC60(&buf, worker.initialAddr);
+        result.printAll();
+    }
+    else if (string(argv[1]) == "project")
+    {
+        Worker worker = taskInitializeRelationR(buf);
+        Worker result = taskProjectRA(&buf, worker.initialAddr);
+        result.printAll();
+    }
+    else if (string(argv[1]) == "loopjoin")
+    {
+        Worker workerR = taskInitializeRelationR(buf);
+        Worker workerS = taskInitializeRelationS(buf);
+        Worker result = taskLoopJoin(&buf, workerS.initialAddr, workerR.initialAddr);
+        result.printAll();
     }
     else
     {

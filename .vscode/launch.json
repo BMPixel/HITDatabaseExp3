@@ -5,12 +5,42 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(lldb) 启动",
+            "name": "buildR",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/bin/test",
             "args": [
                 "buildR"
+            ],
+            "preLaunchTask": "make",
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
+            "name": "select60",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/bin/test",
+            "args": [
+                "select60"
+            ],
+            "preLaunchTask": "make",
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
+            "name": "loopjoin",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/bin/test",
+            "args": [
+                "loopjoin"
             ],
             "preLaunchTask": "make",
             "stopAtEntry": false,
