@@ -6,6 +6,8 @@
 #include <string>
 #include "extmem.h"
 #include <tuple>
+#include <vector>
+#include <map>
 using namespace std;
 
 typedef tuple<int, int> Tuple2;
@@ -15,6 +17,90 @@ int randomInt(int lower, int upper)
 {
     return (rand() % (upper - lower + 1)) + lower;
 }
+
+int readIntFromBlkWithOffset(unsigned char *blk, int offset)
+{
+    int val;
+    for (int i = 0; i < 4; i++)
+    {
+        ((unsigned char *)&val)[i] = blk[offset + i];
+    }
+    return val;
+}
+
+struct HashLoader
+{
+    vector<unsigned char *> blocks;
+    Buffer *buf;
+    int allocatedBlkNum;
+    map<int, vector<unsigned char *>> hashTable;
+    int tupleSize;
+    int initialAddr;
+    int currentAddr;
+    bool hasRemaining;
+
+    HashLoader(Buffer *buf, int allocatedBlkNum, int initialAddr, int tupleSize)
+    {
+        this->buf = buf;
+        this->initialAddr = initialAddr;
+        this->currentAddr = initialAddr;
+        this->allocatedBlkNum = allocatedBlkNum;
+        this->tupleSize = tupleSize;
+        this->hasRemaining = true;
+    }
+
+    void freeAllBlocks()
+    {
+        for (int i = 0; i < blocks.size(); i++)
+        {
+            freeBlockInBuffer(blocks[i], buf);
+        }
+        blocks.clear();
+    }
+
+    bool buildHash()
+    {
+        freeAllBlocks();
+        for (int i = 0; i < allocatedBlkNum; i++)
+        {
+            printf("Loading block %d/%d\n", i + 1, allocatedBlkNum);
+            unsigned char *blk = readBlockFromDisk(currentAddr, buf);
+            blocks.push_back(blk);
+            int offset = 0;
+            while (offset + tupleSize + 4 <= buf->blkSize)
+            {
+                int val1 = readIntFromBlkWithOffset(blk, offset);
+                int key = val1;
+                if (hashTable.find(key) == hashTable.end())
+                {
+                    hashTable[key] = vector<unsigned char *>();
+                }
+                hashTable[key].push_back(blk + offset);
+                offset += tupleSize;
+            }
+            currentAddr = readIntFromBlkWithOffset(blk, buf->blkSize - 4);
+            if (currentAddr == 0)
+            {
+                hasRemaining = false;
+                break;
+            }
+        }
+    }
+
+    vector<unsigned char *> getTuples(int key)
+    {
+        if (hashTable.find(key) == hashTable.end())
+        {
+            return vector<unsigned char *>();
+        }
+        return hashTable[key];
+    }
+
+    bool hasKey(int key)
+    {
+        return hashTable.find(key) != hashTable.end();
+    }
+};
 
 struct Worker
 {
@@ -433,6 +519,38 @@ Worker taskLoopJoin(Buffer *buf, int saddr, int raddr)
     return writer;
 }
 
+Worker taskHashJoin(Buffer buf, int saddr, int raddr)
+{
+    Worker readerS(&buf, saddr, false);
+    readerS.setTupleSize(8);
+    HashLoader hashLoader = HashLoader(&buf, 6, raddr, 8);
+    Worker writer(&buf, 70000, true);
+    writer.setTupleSize(16);
+    while (hashLoader.hasRemaining)
+    {
+        hashLoader.buildHash();
+        while (readerS.hasNext())
+        {
+            Tuple2 tupleS = readerS.readTuple2();
+            if (hashLoader.hasKey(get<0>(tupleS)))
+            {
+                vector<unsigned char *> rowR = hashLoader.getTuples(get<0>(tupleS));
+                for (int i = 0; i < rowR.size(); i++)
+                {
+                    int var1 = readIntFromBlkWithOffset(rowR[i], 0);
+                    int var2 = readIntFromBlkWithOffset(rowR[i], 4);
+                    writer.pushTuple(get<0>(tupleS), get<1>(tupleS), var1, var2);
+                }
+            }
+        }
+        freeBlockInBuffer(readerS.blk, &buf);
+        readerS = Worker(&buf, saddr, false);
+        readerS.setTupleSize(8);
+    }
+    writer.finish();
+    return writer;
+}
+
 int main(int argc, char **argv)
 {
     Buffer buf;         /* A buffer */
@@ -480,6 +598,13 @@ int main(int argc, char **argv)
         Worker workerR = taskInitializeRelationR(buf);
         Worker workerS = taskInitializeRelationS(buf);
         Worker result = taskLoopJoin(&buf, workerS.initialAddr, workerR.initialAddr);
+        result.printAll();
+    }
+    else if (string(argv[1]) == "hashjoin")
+    {
+        Worker workerR = taskInitializeRelationR(buf);
+        Worker workerS = taskInitializeRelationS(buf);
+        Worker result = taskHashJoin(buf, workerS.initialAddr, workerR.initialAddr);
         result.printAll();
     }
     else
