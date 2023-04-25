@@ -1,10 +1,9 @@
 // 关系 R 具有两个属性 A 和 B，其中 A 和 B 的属性值均为 int 型（4 个字节）， A 的值域为[1, 40]，B 的值域为[1, 1000]。关系 S 具有两个属性 C 和 D，其中 C 和 D 的属性值均为 int 型（4 个字节）。 C 的值域为[20, 60]，D 的值域为[1, 1000]。
 // 使用 ExtMem 程序库建立两个关系 R 和 S 的物理存储。关系的物理存储形式 为磁盘块序列 B1 , B2 , …, Bn ，其中 B i 的最后 4 个字节存放 B i+1 的地址。 即 R 和 S 的每个元组的大小均为 8 个字节。 块的大小设置为 64 个字节，缓冲区大小设置为 512+8=520 个字节。这样， 每块可存放 7 个元组和 1 个后继磁盘块地址，缓冲区内可最多存放 8 个块。编写程序，随机生成关系 R 和 S，使得 R 中包含 16 * 7 = 112 个元组，S 中 包含 32 * 7 = 224 个元组。
 
-#include <cstdlib>
-#include <cstdio>
 #include <string>
 #include "worker.h"
+#include "extmem.h"
 using namespace std;
 
 Worker taskInitializeRelationR(Buffer buf)
