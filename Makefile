@@ -3,7 +3,7 @@ CXX = g++
 CXXFLAGS = -g -Wno-deprecated-declarations -std=c++17
 
 # Source files
-SRC = test.cpp extmem.cpp
+SRC = test.cpp extmem.cpp worker.cpp
 
 # Binary output
 BIN = bin/test
