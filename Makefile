@@ -1,6 +1,6 @@
 # Compiler and flags
 CXX = g++
-CXXFLAGS = -g -Wno-deprecated-declarations
+CXXFLAGS = -g -Wno-deprecated-declarations -std=c++17
 
 # Source files
 SRC = test.cpp extmem.cpp

@@ -5,14 +5,18 @@
 #include <cstdio>
 #include <string>
 #include "extmem.h"
+#include <tuple>
 using namespace std;
+
+typedef tuple<int, int> Tuple2;
+typedef tuple<int, int, int, int> Tuple4;
 
 int randomInt(int lower, int upper)
 {
     return (rand() % (upper - lower + 1)) + lower;
 }
 
-struct WorkingBlk
+struct Worker
 {
     unsigned char *blk;
     Buffer *buf;
@@ -20,25 +24,45 @@ struct WorkingBlk
     int currentAddr;
     int offset;
     int tupleSize;
-    WorkingBlk(Buffer *buf, int initialAddr)
+    bool write_mode;
+
+    Worker(Buffer *buf, int initialAddr, bool write_mode)
     {
         this->buf = buf;
         this->initialAddr = initialAddr;
         this->currentAddr = initialAddr;
         this->offset = 0;
         this->tupleSize = -1;
-        blk = getNewBlockInBuffer(buf);
+        this->write_mode = write_mode;
+        if (write_mode)
+        {
+            blk = getNewBlockInBuffer(buf);
+        }
+        else
+        {
+            blk = readBlockFromDisk(initialAddr, buf);
+        }
     }
 
-    int readInt(int offset)
+    int readIntFromBlkWithOffset(int offset)
     {
         int val;
         memcpy(&val, blk + offset, 4);
         return val;
     }
 
+    void setTupleSize(int tupleSize)
+    {
+        this->tupleSize = tupleSize;
+    }
+
     int pushTuple(int val1, int val2)
     {
+        if (!write_mode)
+        {
+            perror("Not in write mode!\n");
+            return -1;
+        }
         if (tupleSize == -1)
         {
             tupleSize = 8;
@@ -66,6 +90,11 @@ struct WorkingBlk
 
     int pushTuple(int val1, int val2, int val3, int val4)
     {
+        if (!write_mode)
+        {
+            perror("Not in write mode!\n");
+            return -1;
+        }
         if (tupleSize == -1)
         {
             tupleSize = 16;
@@ -94,6 +123,11 @@ struct WorkingBlk
 
     int pushTuple(int val)
     {
+        if (!write_mode)
+        {
+            perror("Not in write mode!\n");
+            return -1;
+        }
         if (tupleSize == -1)
         {
             tupleSize = 4;
@@ -117,6 +151,127 @@ struct WorkingBlk
         return 0;
     }
 
+    int readTuple1()
+    {
+        if (write_mode)
+        {
+            perror("Not in read mode!\n");
+            return -1;
+        }
+        if (tupleSize == -1 || tupleSize != 4)
+        {
+            perror("Tuple size is not set!\n");
+            return -1;
+        }
+        if (offset + tupleSize > buf->blkSize)
+        {
+            int nextBlockAddr = readIntFromBlkWithOffset(buf->blkSize - 4);
+            if (nextBlockAddr == 0)
+            {
+                perror("No more tuples!\n");
+                return -1;
+            }
+            currentAddr = nextBlockAddr;
+            freeBlockInBuffer(blk, buf);
+            blk = readBlockFromDisk(currentAddr, buf);
+            offset = 0;
+        }
+        int val = readIntFromBlkWithOffset(offset);
+        offset += tupleSize;
+        return val;
+    }
+
+    Tuple2 readTuple2()
+    {
+        if (write_mode)
+        {
+            perror("Not in read mode!\n");
+            return make_tuple(-1, -1);
+        }
+        if (tupleSize == -1 || tupleSize != 8)
+        {
+            perror("Tuple size is not set!\n");
+            return make_tuple(-1, -1);
+        }
+        if (offset + tupleSize > buf->blkSize)
+        {
+            int nextBlockAddr = readIntFromBlkWithOffset(buf->blkSize - 4);
+            if (nextBlockAddr == 0)
+            {
+                perror("No more tuples!\n");
+                return make_tuple(-1, -1);
+            }
+            currentAddr = nextBlockAddr;
+            freeBlockInBuffer(blk, buf);
+            blk = readBlockFromDisk(currentAddr, buf);
+            offset = 0;
+        }
+        int val1 = readIntFromBlkWithOffset(offset);
+        int val2 = readIntFromBlkWithOffset(offset + 4);
+        offset += tupleSize;
+        return make_tuple(val1, val2);
+    }
+
+    Tuple4 readTuple4()
+    {
+        if (write_mode)
+        {
+            perror("Not in read mode!\n");
+            return make_tuple(-1, -1, -1, -1);
+        }
+        if (tupleSize == -1 || tupleSize != 16)
+        {
+            perror("Tuple size is not set!\n");
+            return make_tuple(-1, -1, -1, -1);
+        }
+        if (offset + tupleSize > buf->blkSize)
+        {
+            int nextBlockAddr = readIntFromBlkWithOffset(buf->blkSize - 4);
+            if (nextBlockAddr == 0)
+            {
+                perror("No more tuples!\n");
+                return make_tuple(-1, -1, -1, -1);
+            }
+            currentAddr = nextBlockAddr;
+            freeBlockInBuffer(blk, buf);
+            blk = readBlockFromDisk(currentAddr, buf);
+            offset = 0;
+        }
+        int val1 = readIntFromBlkWithOffset(offset);
+        int val2 = readIntFromBlkWithOffset(offset + 4);
+        int val3 = readIntFromBlkWithOffset(offset + 8);
+        int val4 = readIntFromBlkWithOffset(offset + 12);
+        offset += tupleSize;
+        return make_tuple(val1, val2, val3, val4);
+    }
+
+    bool hasNext()
+    {
+        if (write_mode)
+        {
+            perror("Not in read mode!\n");
+            return false;
+        }
+        if (tupleSize == -1)
+        {
+            perror("Tuple size is not set!\n");
+            return false;
+        }
+        if (offset + tupleSize > buf->blkSize)
+        {
+            int nextBlockAddr = readIntFromBlkWithOffset(buf->blkSize - 4);
+            if (nextBlockAddr == 0)
+            {
+                return false;
+            }
+            currentAddr = nextBlockAddr;
+            freeBlockInBuffer(blk, buf);
+            blk = readBlockFromDisk(currentAddr, buf);
+            offset = 0;
+        }
+        return true;
+    }
+
     void finish()
     {
         int nextBlockAddr = 0;
@@ -125,39 +280,39 @@ struct WorkingBlk
         writeBlockToDisk(blk, currentAddr, buf);
     }
 
-    int printAll()
+    void printAll()
     {
         if (tupleSize == -1)
         {
             perror("Tuple size is not set!\n");
-            return -1;
+            return;
         }
         int currentAddr = initialAddr;
         while (currentAddr != 0)
         {
             printf("Block addr: %d\n", currentAddr);
             blk = readBlockFromDisk(currentAddr, buf);
-            int nextBlockAddr = readInt(buf->blkSize - 4);
+            int nextBlockAddr = readIntFromBlkWithOffset(buf->blkSize - 4);
 
             for (size_t i = 0; i < (buf->blkSize - 4) / tupleSize; i++)
             {
                 if (tupleSize == 4)
                 {
-                    int val = readInt(i * tupleSize);
+                    int val = readIntFromBlkWithOffset(i * tupleSize);
                     printf("%d ", val);
                 }
                 else if (tupleSize == 8)
                 {
-                    int val1 = readInt(i * tupleSize);
-                    int val2 = readInt(i * tupleSize + 4);
+                    int val1 = readIntFromBlkWithOffset(i * tupleSize);
+                    int val2 = readIntFromBlkWithOffset(i * tupleSize + 4);
                     printf("(%d, %d) \n", val1, val2);
                 }
                 else if (tupleSize == 16)
                 {
-                    int val1 = readInt(i * tupleSize);
-                    int val2 = readInt(i * tupleSize + 4);
-                    int val3 = readInt(i * tupleSize + 8);
-                    int val4 = readInt(i * tupleSize + 12);
+                    int val1 = readIntFromBlkWithOffset(i * tupleSize);
+                    int val2 = readIntFromBlkWithOffset(i * tupleSize + 4);
+                    int val3 = readIntFromBlkWithOffset(i * tupleSize + 8);
+                    int val4 = readIntFromBlkWithOffset(i * tupleSize + 12);
                     printf("(%d, %d, %d, %d) ", val1, val2, val3, val4);
                 }
             }
@@ -168,32 +323,32 @@ struct WorkingBlk
     }
 };
 
-WorkingBlk initializeRelationR(Buffer buf)
+Worker initializeRelationR(Buffer buf)
 {
-    WorkingBlk workingBlk(&buf, 1000000);
+    Worker writeWorker(&buf, 10000, true);
     for (int i = 0; i < 16; i++)
     {
         for (int j = 0; j < 7; j++)
         {
-            workingBlk.pushTuple(randomInt(1, 40), randomInt(1, 1000));
+            writeWorker.pushTuple(randomInt(1, 40), randomInt(1, 1000));
         }
     }
-    workingBlk.finish();
-    return workingBlk;
+    writeWorker.finish();
+    return writeWorker;
 }
 
-WorkingBlk initializeRelationS(Buffer buf)
+Worker initializeRelationS(Buffer buf)
 {
-    WorkingBlk workingBlk(&buf, 1000400);
+    Worker writeWorker(&buf, 20000, true);
     for (int i = 0; i < 32; i++)
     {
         for (int j = 0; j < 7; j++)
         {
-            workingBlk.pushTuple(randomInt(20, 60), randomInt(1, 1000));
+            writeWorker.pushTuple(randomInt(20, 60), randomInt(1, 1000));
         }
     }
-    workingBlk.finish();
-    return workingBlk;
+    writeWorker.finish();
+    return writeWorker;
 }
 
 int main(int argc, char **argv)
@@ -217,7 +372,14 @@ int main(int argc, char **argv)
     }
     if (string(argv[1]) == "buildR")
     {
-        initializeRelationR(buf);
+        Worker worker = initializeRelationR(buf);
+        Worker reader = Worker(&buf, worker.initialAddr, false);
+        reader.setTupleSize(8);
+        while (reader.hasNext())
+        {
+            Tuple2 tuple = reader.readTuple2();
+            printf("(%d, %d) ", get<0>(tuple), get<1>(tuple));
+        }
     }
     else
     {
