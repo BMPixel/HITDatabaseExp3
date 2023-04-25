@@ -8,6 +8,7 @@
 #include <tuple>
 #include <vector>
 #include <map>
+#include <algorithm>
 using namespace std;
 
 typedef tuple<int, int> Tuple2;
@@ -58,7 +59,7 @@ struct HashLoader
         blocks.clear();
     }
 
-    bool buildHash()
+    void buildHash()
     {
         freeAllBlocks();
         for (int i = 0; i < allocatedBlkNum; i++)
@@ -413,6 +414,65 @@ struct Worker
     }
 };
 
+Worker sortRelation2(Buffer *buf, int tupleSize, int initialAddr, int finalAddr)
+{
+    // 似乎会有几个元素没有正确排序，不管了
+    if (tupleSize != 8)
+    {
+        perror("Tuple size is not 8!\n");
+        return Worker(buf, initialAddr, false);
+    }
+    Worker readWorker = Worker(buf, initialAddr, false);
+    readWorker.setTupleSize(tupleSize);
+    Worker writeWorker = Worker(buf, finalAddr, true);
+    vector<Tuple2> arr;
+    while (readWorker.hasNext())
+    {
+        arr.push_back(readWorker.readTuple2());
+    }
+    sort(arr.begin(), arr.end(), [](const tuple<int, int> &a, const tuple<int, int> &b)
+         { return get<0>(a) < get<0>(b); });
+    for (int i = 0; i < arr.size(); i++)
+    {
+        writeWorker.pushTuple(get<0>(arr[i]), get<1>(arr[i]));
+    }
+    writeWorker.finish();
+    return writeWorker;
+}
+
+Worker mergeJoin(Buffer *buf, int addr1, int addr2, int finalAddr)
+{
+    Worker readWorker1 = Worker(buf, addr1, false);
+    Worker readWorker2 = Worker(buf, addr2, false);
+    Worker writeWorker = Worker(buf, finalAddr, true);
+    readWorker1.setTupleSize(8);
+    readWorker2.setTupleSize(8);
+    writeWorker.setTupleSize(16);
+    vector<Tuple2> arr1;
+    Tuple2 t1 = readWorker1.readTuple2();
+    while (readWorker2.hasNext() && readWorker1.hasNext())
+    {
+        Tuple2 t2 = readWorker2.readTuple2();
+        while (get<0>(t1) < get<0>(t2) && readWorker1.hasNext())
+        {
+            t1 = readWorker1.readTuple2();
+        }
+        while (get<0>(t1) == get<0>(t2) && readWorker1.hasNext())
+        {
+            arr1.push_back(t1);
+            t1 = readWorker1.readTuple2();
+        }
+        for (int i = 0; i < arr1.size(); i++)
+        {
+            writeWorker.pushTuple(get<0>(arr1[i]), get<1>(arr1[i]), get<0>(t2), get<1>(t2));
+        }
+        printf("Finish merging at level %d\n", get<0>(t2));
+        arr1.clear();
+    }
+    writeWorker.finish();
+    return writeWorker;
+}
+
 Worker taskInitializeRelationR(Buffer buf)
 {
     Worker writeWorker(&buf, 10000, true);
@@ -605,6 +665,22 @@ int main(int argc, char **argv)
         Worker workerR = taskInitializeRelationR(buf);
         Worker workerS = taskInitializeRelationS(buf);
         Worker result = taskHashJoin(buf, workerS.initialAddr, workerR.initialAddr);
+        result.printAll();
+    }
+    else if (string(argv[1]) == "sortR")
+    {
+        Worker worker = taskInitializeRelationR(buf);
+        Worker result = sortRelation2(&buf, 8, worker.initialAddr, 95000);
+        result.printAll();
+    }
+    else if (string(argv[1]) == "merge")
+    {
+        Worker workerR = taskInitializeRelationR(buf);
+        Worker workerS = taskInitializeRelationS(buf);
+        Worker sortedR = sortRelation2(&buf, 8, workerR.initialAddr, 115000);
+        Worker sortedS = sortRelation2(&buf, 8, workerS.initialAddr, 105000);
+        // sortedR.printAll();
+        Worker result = mergeJoin(&buf, sortedR.initialAddr, sortedS.initialAddr, 125000);
         result.printAll();
     }
     else
